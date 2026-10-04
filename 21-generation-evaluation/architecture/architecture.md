@@ -1,0 +1,81 @@
+# Generation Evaluation & Hallucination Metrics: Theoretical Deep Dive
+
+## 1. First-Principles Mechanics of Generation Evaluation
+
+Generation evaluation quantifies whether an LLM's synthesized response is **faithful to retrieved evidence** (groundedness), **relevant to the user query**, and **factually accurate** against reference answers.
+
+```
+                    Generated Answer (A)
+                             │
+                             ▼
+             ┌───────────────────────────────┐
+             │ Atomic Claim Decomposition    │
+             │ Splits answer into sentences: │
+             │ s1: "Acme founded in 2010"    │
+             │ s2: "Revenue was $10M"        │
+             └───────────────┬───────────────┘
+                             │
+                             ▼
+             ┌───────────────────────────────┐
+             │ Entailment Verification       │
+             │ Checks s_i against Context C  │
+             │ s1: ENTAILED (Supported)      │
+             │ s2: NOT ENTAILED (Hallucinated│
+             └───────────────┬───────────────┘
+                             │
+                             ▼
+             ┌───────────────────────────────┐
+             │ Faithfulness Score = 1 / 2    │
+             │ Hallucination Rate = 50%      │
+             └───────────────────────────────┘
+```
+
+---
+
+## 2. Mathematical Formalization: Claim Entailment & Semantic Similarity
+
+### 1. Atomic Claim Extraction:
+Let answer $A$ decompose into $M$ independent propositions $\mathcal{P} = \{p_1, p_2, \dots, p_M\}$ using a structured extraction prompt or syntactic dependency parser.
+
+### 2. Context Groundedness / Faithfulness:
+
+$$\text{Faithfulness}(A, C) = \frac{\sum_{i=1}^M \mathbb{I}(C \models p_i)}{M}$$
+
+Where $C \models p_i$ represents semantic entailment computed by Natural Language Inference (NLI) classifier or LLM Judge.
+
+### 3. Answer Semantic Similarity (BERTScore / Embedding Cosine):
+
+$$\text{Similarity}(A, A^*) = \cos(\mathbf{e}(A), \mathbf{e}(A^*)) = \frac{\mathbf{e}(A) \cdot \mathbf{e}(A^*)}{\|\mathbf{e}(A)\| \|\mathbf{e}(A^*)\|}$$
+
+Where $A^*$ is the reference ground truth answer.
+
+---
+
+## 3. Generation Metric Trade-Off Matrix
+
+| Metric | Target Dimension | Reference Required | Computation Cost | Sensitivity to Hallucination |
+|---|---|---|---|---|
+| **Faithfulness / Groundedness** | Context Entailment | No (Only retrieved context) | Moderate (NLI / LLM) | Extremely High |
+| **Answer Relevance** | Query Intent Alignment | No (Only user query) | Moderate (LLM Judge) | Moderate |
+| **Semantic Correctness** | Factual Match to Gold | Yes (Golden reference answer) | Low (Embedding Cosine) | High |
+| **ROUGE-L / BLEU** | Lexical $N$-gram Overlap | Yes (Golden reference answer) | Zero ($< 1\text{ ms}$) | Very Poor |
+
+---
+
+## 4. Failure Modes & Mitigations
+
+1. **Semantic Inversion in N-Gram Metrics (ROUGE / BLEU)**:
+   - *Failure*: Generated answer *"Company was not profitable"* scores $90\%$ ROUGE against reference *"Company was profitable"*, despite being opposite in meaning.
+   - *Mitigation*: Replace ROUGE/BLEU with NLI-based entailment scoring or LLM-as-a-Judge semantic checks.
+2. **Compound Sentence Hallucination Masking**:
+   - *Failure*: A sentence containing three true facts and one fabricated number is scored as fully correct if evaluated as a single unit.
+   - *Mitigation*: Deconstruct sentences into minimal atomic single-fact propositions before entailment scoring.
+
+---
+
+## 5. SOLID Principles in Generation Evaluation
+
+- **Single Responsibility (SRP)**: `ClaimExtractor` splits propositions; `EntailmentChecker` verifies support; `MetricAggregator` calculates ratios.
+- **Open/Closed (OCP)**: New metrics (G-Eval, Faithfulness, ROUGE) implement `GenerationMetricProtocol`.
+- **Liskov Substitution (LSP)**: All metrics return `GenerationScore(name: str, value: float, details: dict)`.
+- **Dependency Inversion (DIP)**: Evaluation harness depends on `GenerationMetricProtocol`.
